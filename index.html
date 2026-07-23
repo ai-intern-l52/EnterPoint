@@ -23,6 +23,7 @@
 <body>
   <div class="spinner"></div>
   <div class="msg" id="msg">正在載入訂購系統…</div>
+  <div style="margin-top: 20px; font-size: 12px; color: rgba(22,24,29,0.5); max-width: 300px; line-height: 1.6; white-space: pre-wrap; word-break: break-all;" id="debug"></div>
 
 <script>
   // ========================================================================
@@ -37,37 +38,53 @@
   var LIFF_ID = '2010723847-wSZTowHv';
   var GAS_URL = 'https://script.google.com/macros/s/AKfycbyC1PheOY6vscOQzOLjzQsIP3ydoxAeW250nD5ISPW_Ykptq-Tp35CEIESnM3_eQBT5dQ/exec';
 
+  function debugLog(msg) {
+    var el = document.getElementById('debug');
+    if (!el) return;
+    console.log('[LIFF]', msg);
+    el.textContent += '[' + new Date().toLocaleTimeString('zh-TW', {hour12:false}) + '] ' + msg + '\n';
+  }
+
   function goToApp(userId, displayName) {
     var url = GAS_URL;
     var qs = [];
     if (userId) qs.push('uid=' + encodeURIComponent(userId));
     if (displayName) qs.push('dn=' + encodeURIComponent(displayName));
     if (qs.length) url += '?' + qs.join('&');
+    debugLog('轉址到: ' + url);
     location.replace(url); // replace:不留在瀏覽紀錄,避免返回時打轉
   }
+
+  debugLog('LIFF_ID=' + LIFF_ID);
+  debugLog('GAS_URL=' + GAS_URL);
 
   // 保險:萬一 LIFF 有任何意外卡住,10 秒後仍以訪客模式進入,不擋下單
   var settled = false;
   setTimeout(function () {
-    if (!settled) { document.getElementById('msg').textContent = '以訪客模式進入…'; goToApp('', ''); }
+    if (!settled) { debugLog('⏱ 10秒逾時,以訪客模式進入'); document.getElementById('msg').textContent = '以訪客模式進入…'; goToApp('', ''); }
   }, 10000);
 
+  debugLog('呼叫 liff.init()...');
   liff.init({ liffId: LIFF_ID }).then(function () {
+    debugLog('init 成功,isLoggedIn=' + liff.isLoggedIn());
     if (!liff.isLoggedIn()) {
-      // 外部瀏覽器開啟時會走這裡:導去 LINE 登入,登入後自動回到本頁重跑
+      debugLog('未登入,導向 LINE 登入頁...');
       liff.login({ redirectUri: location.href });
       return null;
     }
+    debugLog('已登入,呼叫 getProfile()...');
     return liff.getProfile();
   }).then(function (profile) {
     settled = true;
     if (profile) {
+      debugLog('✓ getProfile 成功,userId=' + profile.userId);
       goToApp(profile.userId || '', profile.displayName || '');
+    } else {
+      debugLog('profile 為 null');
     }
   }).catch(function (err) {
-    // 初始化失敗也不擋客戶:記在 console,直接以訪客模式進入
     settled = true;
-    console.log('[LIFF] init/getProfile 失敗:', err && err.message, err && err.code);
+    debugLog('❌ 錯誤: ' + (err && err.message) + ' (code:' + (err && err.code) + ')');
     document.getElementById('msg').textContent = '以訪客模式進入…';
     goToApp('', '');
   });
