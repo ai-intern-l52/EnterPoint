@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>載入中…</title>
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    font-family: -apple-system, "Segoe UI", "Noto Sans TC", sans-serif;
+    background: #F5F6F8; color: #16181D;
+  }
+  .spinner {
+    width: 40px; height: 40px; border: 4px solid #E2F5F6; border-top-color: #30BAC4;
+    border-radius: 50%; animation: spin 0.8s linear infinite; margin-bottom: 16px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .msg { font-size: 14px; color: rgba(22,24,29,0.6); }
+</style>
+</head>
+<body>
+  <div class="spinner"></div>
+  <div class="msg" id="msg">正在載入訂購系統…</div>
+
+<script>
+  // ========================================================================
+  // LIFF 落地頁(必須放在「非 iframe」的靜態空間,例如 GitHub Pages)
+  //
+  // 為什麼需要這一頁:Google Apps Script 的網頁一定被包在巢狀 iframe 裡,
+  // LINE 的原生橋接只給最上層文件,所以 liff.init() 在 GAS 裡會永遠卡住。
+  // 這一頁在「最上層」跑 LIFF,取得 userId 後,再把它當成網址參數轉址到 GAS。
+  //
+  // 設定方式:把這一頁的網址設成 LINE LIFF app 的 Endpoint URL。
+  // ========================================================================
+  var LIFF_ID = '2010723847-wSZTowHv';
+  var GAS_URL = 'https://script.google.com/macros/s/AKfycbyC1PheOY6vscOQzOLjzQsIP3ydoxAeW250nD5ISPW_Ykptq-Tp35CEIESnM3_eQBT5dQ/exec';
+
+  function goToApp(userId, displayName) {
+    var url = GAS_URL;
+    var qs = [];
+    if (userId) qs.push('uid=' + encodeURIComponent(userId));
+    if (displayName) qs.push('dn=' + encodeURIComponent(displayName));
+    if (qs.length) url += '?' + qs.join('&');
+    location.replace(url); // replace:不留在瀏覽紀錄,避免返回時打轉
+  }
+
+  // 保險:萬一 LIFF 有任何意外卡住,10 秒後仍以訪客模式進入,不擋下單
+  var settled = false;
+  setTimeout(function () {
+    if (!settled) { document.getElementById('msg').textContent = '以訪客模式進入…'; goToApp('', ''); }
+  }, 10000);
+
+  liff.init({ liffId: LIFF_ID }).then(function () {
+    if (!liff.isLoggedIn()) {
+      // 外部瀏覽器開啟時會走這裡:導去 LINE 登入,登入後自動回到本頁重跑
+      liff.login({ redirectUri: location.href });
+      return null;
+    }
+    return liff.getProfile();
+  }).then(function (profile) {
+    settled = true;
+    if (profile) {
+      goToApp(profile.userId || '', profile.displayName || '');
+    }
+  }).catch(function (err) {
+    // 初始化失敗也不擋客戶:記在 console,直接以訪客模式進入
+    settled = true;
+    console.log('[LIFF] init/getProfile 失敗:', err && err.message, err && err.code);
+    document.getElementById('msg').textContent = '以訪客模式進入…';
+    goToApp('', '');
+  });
+</script>
+</body>
+</html>
