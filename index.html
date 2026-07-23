@@ -27,13 +27,18 @@
 
 <script>
   // ========================================================================
-  // LIFF 落地頁(必須放在「非 iframe」的靜態空間,例如 GitHub Pages)
+  // LIFF 身份驗證入口(必須放在「非 iframe」的靜態空間,例如 GitHub Pages)
   //
-  // 為什麼需要這一頁:Google Apps Script 的網頁一定被包在巢狀 iframe 裡,
-  // LINE 的原生橋接只給最上層文件,所以 liff.init() 在 GAS 裡會永遠卡住。
-  // 這一頁在「最上層」跑 LIFF,取得 userId 後,再把它當成網址參數轉址到 GAS。
+  // 流程:
+  // 1. liff.init() + liff.login() + liff.getProfile()
+  // 2. 取得 idToken (liff.getIDToken())
+  // 3. fetch POST 到 GAS /exec,傳 { userId, displayName, idToken }
+  // 4. GAS 驗證並建立會話,回傳 sessionId
+  // 5. redirect 到 GAS /exec?sid=sessionId
+  // 6. GAS 的 doGet 檢查會話,注入身份到訂購頁面
   //
-  // 設定方式:把這一頁的網址設成 LINE LIFF app 的 Endpoint URL。
+  // 為什麼要這樣:GAS 的頁面被包在巢狀 iframe,LIFF 無法初始化。
+  // 改在 GitHub Pages(頂層)驗證身份,然後用 POST + session 告訴 GAS。
   // ========================================================================
   var LIFF_ID = '2010803714-65qZ9xeC';
   var GAS_URL = 'https://script.google.com/macros/s/AKfycbyC1PheOY6vscOQzOLjzQsIP3ydoxAeW250nD5ISPW_Ykptq-Tp35CEIESnM3_eQBT5dQ/exec';
@@ -45,23 +50,23 @@
     el.textContent += '[' + new Date().toLocaleTimeString('zh-TW', {hour12:false}) + '] ' + msg + '\n';
   }
 
-  function goToApp(userId, displayName) {
+  function goToApp(sessionId) {
     var url = GAS_URL;
-    var qs = [];
-    if (userId) qs.push('uid=' + encodeURIComponent(userId));
-    if (displayName) qs.push('dn=' + encodeURIComponent(displayName));
-    if (qs.length) url += '?' + qs.join('&');
+    if (sessionId) url += '?sid=' + encodeURIComponent(sessionId);
     debugLog('轉址到: ' + url);
-    location.replace(url); // replace:不留在瀏覽紀錄,避免返回時打轉
+    location.replace(url);
   }
 
   debugLog('LIFF_ID=' + LIFF_ID);
   debugLog('GAS_URL=' + GAS_URL);
 
-  // 保險:萬一 LIFF 有任何意外卡住,10 秒後仍以訪客模式進入,不擋下單
   var settled = false;
   setTimeout(function () {
-    if (!settled) { debugLog('⏱ 10秒逾時,以訪客模式進入'); document.getElementById('msg').textContent = '以訪客模式進入…'; goToApp('', ''); }
+    if (!settled) {
+      debugLog('⏱ 10秒逾時,以訪客模式進入');
+      document.getElementById('msg').textContent = '以訪客模式進入…';
+      goToApp('');
+    }
   }, 10000);
 
   debugLog('呼叫 liff.init()...');
@@ -75,18 +80,48 @@
     debugLog('已登入,呼叫 getProfile()...');
     return liff.getProfile();
   }).then(function (profile) {
-    settled = true;
-    if (profile) {
-      debugLog('✓ getProfile 成功,userId=' + profile.userId);
-      goToApp(profile.userId || '', profile.displayName || '');
-    } else {
+    if (!profile) {
       debugLog('profile 為 null');
+      settled = true;
+      goToApp('');
+      return;
     }
+    debugLog('✓ getProfile 成功,userId=' + profile.userId);
+    debugLog('取得 idToken...');
+    var idToken = liff.getIDToken();
+    if (!idToken) {
+      debugLog('⚠️ 無法取得 idToken');
+      settled = true;
+      goToApp('');
+      return;
+    }
+    debugLog('✓ 有 idToken,post 到 GAS...');
+    return fetch(GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId: profile.userId,
+        displayName: profile.displayName || '',
+        idToken: idToken
+      })
+    }).then(function (res) {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return res.json();
+    }).then(function (result) {
+      settled = true;
+      if (result.success && result.sessionId) {
+        debugLog('✓ GAS 回應成功,sessionId=' + result.sessionId.substring(0, 8) + '...');
+        goToApp(result.sessionId);
+      } else {
+        debugLog('❌ GAS 回應失敗:' + (result.error || '未知'));
+        goToApp('');
+      }
+    });
   }).catch(function (err) {
     settled = true;
     debugLog('❌ 錯誤: ' + (err && err.message) + ' (code:' + (err && err.code) + ')');
     document.getElementById('msg').textContent = '以訪客模式進入…';
-    goToApp('', '');
+    goToApp('');
   });
 </script>
 </body>
