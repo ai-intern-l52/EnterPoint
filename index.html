@@ -52,7 +52,8 @@
 
   function goToApp(sessionId) {
     var url = GAS_URL;
-    if (sessionId) url += '?sid=' + encodeURIComponent(sessionId);
+    // ⚠️ 參數名不能用 sid:sid 是 Google 基礎架構的保留參數,有值時會被攔截回 400。
+    if (sessionId) url += '?token=' + encodeURIComponent(sessionId);
     debugLog('轉址到: ' + url);
     location.replace(url);
   }
