@@ -96,9 +96,11 @@
       return;
     }
     debugLog('✓ 有 idToken,post 到 GAS...');
+    // 用 text/plain 避開 CORS 預檢(GAS 無法回應 preflight OPTIONS)。
+    // body 照樣是 JSON 字串,GAS 端用 JSON.parse(e.postData.contents) 解析。
     return fetch(GAS_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify({
         userId: profile.userId,
         displayName: profile.displayName || '',
