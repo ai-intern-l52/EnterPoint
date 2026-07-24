@@ -42,58 +42,39 @@
   var LIFF_ID = '2010803714-65qZ9xeC';
   var GAS_URL = 'https://script.google.com/macros/s/AKfycbyC1PheOY6vscOQzOLjzQsIP3ydoxAeW250nD5ISPW_Ykptq-Tp35CEIESnM3_eQBT5dQ/exec';
 
-  // 保留 console 記錄(僅開發者工具可見),移除畫面上的除錯面板
-  function debugLog(msg) {
-    console.log('[LIFF]', msg);
-  }
-
   function goToApp(sessionId) {
     var url = GAS_URL;
     // ⚠️ 參數名不能用 sid:sid 是 Google 基礎架構的保留參數,有值時會被攔截回 400。
     if (sessionId) url += '?token=' + encodeURIComponent(sessionId);
-    debugLog('轉址到: ' + url);
     location.replace(url);
   }
-
-  debugLog('LIFF_ID=' + LIFF_ID);
-  debugLog('GAS_URL=' + GAS_URL);
 
   var settled = false;
   setTimeout(function () {
     if (!settled) {
-      debugLog('⏱ 10秒逾時,以訪客模式進入');
       document.getElementById('msg').textContent = '以訪客模式進入…';
       goToApp('');
     }
   }, 10000);
 
-  debugLog('呼叫 liff.init()...');
   liff.init({ liffId: LIFF_ID }).then(function () {
-    debugLog('init 成功,isLoggedIn=' + liff.isLoggedIn());
     if (!liff.isLoggedIn()) {
-      debugLog('未登入,導向 LINE 登入頁...');
       liff.login({ redirectUri: location.href });
       return null;
     }
-    debugLog('已登入,呼叫 getProfile()...');
     return liff.getProfile();
   }).then(function (profile) {
     if (!profile) {
-      debugLog('profile 為 null');
       settled = true;
       goToApp('');
       return;
     }
-    debugLog('✓ getProfile 成功,userId=' + profile.userId);
-    debugLog('取得 idToken...');
     var idToken = liff.getIDToken();
     if (!idToken) {
-      debugLog('⚠️ 無法取得 idToken');
       settled = true;
       goToApp('');
       return;
     }
-    debugLog('✓ 有 idToken,post 到 GAS...');
     // 用 text/plain 避開 CORS 預檢(GAS 無法回應 preflight OPTIONS)。
     // body 照樣是 JSON 字串,GAS 端用 JSON.parse(e.postData.contents) 解析。
     return fetch(GAS_URL, {
@@ -109,17 +90,10 @@
       return res.json();
     }).then(function (result) {
       settled = true;
-      if (result.success && result.sessionId) {
-        debugLog('✓ GAS 回應成功,sessionId=' + result.sessionId.substring(0, 8) + '...');
-        goToApp(result.sessionId);
-      } else {
-        debugLog('❌ GAS 回應失敗:' + (result.error || '未知'));
-        goToApp('');
-      }
+      goToApp(result.success && result.sessionId ? result.sessionId : '');
     });
-  }).catch(function (err) {
+  }).catch(function () {
     settled = true;
-    debugLog('❌ 錯誤: ' + (err && err.message) + ' (code:' + (err && err.code) + ')');
     document.getElementById('msg').textContent = '以訪客模式進入…';
     goToApp('');
   });
