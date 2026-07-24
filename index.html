@@ -22,7 +22,8 @@
 </head>
 <body>
   <div class="spinner"></div>
-  <div class="msg" id="msg">請耐心等候載入訂購系統…</div>
+  <div class="msg" id="msg">正在載入訂購系統…</div>
+  <div style="margin-top: 20px; font-size: 12px; color: rgba(22,24,29,0.5); max-width: 300px; line-height: 1.6; white-space: pre-wrap; word-break: break-all;" id="debug"></div>
 
 <script>
   // ========================================================================
@@ -42,9 +43,11 @@
   var LIFF_ID = '2010821918-1M2BovKM';
   var GAS_URL = 'https://script.google.com/macros/s/AKfycbyC1PheOY6vscOQzOLjzQsIP3ydoxAeW250nD5ISPW_Ykptq-Tp35CEIESnM3_eQBT5dQ/exec';
 
-  // 保留 console 記錄(僅開發者工具可見),移除畫面上的除錯面板
+  // 除錯面板:排除新 LIFF 問題期間暫時開啟,修好後可再移除
   function debugLog(msg) {
+    var el = document.getElementById('debug');
     console.log('[LIFF]', msg);
+    if (el) el.textContent += '[' + new Date().toLocaleTimeString('zh-TW', {hour12:false}) + '] ' + msg + '\n';
   }
 
   function goToApp(sessionId) {
