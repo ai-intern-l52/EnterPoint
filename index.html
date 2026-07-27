@@ -26,6 +26,10 @@
   <!-- 只在登入失敗時才顯示的極簡錯誤列;正常流程完全看不到 -->
   <div id="err" style="display:none; margin-top:16px; max-width:300px; font-size:13px; line-height:1.6;
     color:#B00020; background:#FDECEE; border:1px solid #F5C2C7; border-radius:8px; padding:10px 12px; text-align:center;"></div>
+  <!-- 登入失敗時的唯一出口:重試。系統不接受訪客,沒有身分就不放行 -->
+  <button id="retry" type="button" style="display:none; margin-top:16px; border:0; cursor:pointer;
+    background:#30BAC4; color:#fff; font-size:15px; padding:11px 30px; border-radius:999px;
+    font-family:inherit;">重新登入</button>
 
 <script>
   // ========================================================================
@@ -43,27 +47,73 @@
   // 改在 GitHub Pages(頂層)驗證身份,然後用 POST + session 告訴 GAS。
   // ========================================================================
   var LIFF_ID = '2010821918-1M2BovKM';
-  var GAS_URL = 'https://script.google.com/macros/s/AKfycbyC1PheOY6vscOQzOLjzQsIP3ydoxAeW250nD5ISPW_Ykptq-Tp35CEIESnM3_eQBT5dQ/exec';
+  var GAS_DEPLOY_ID = 'AKfycbyC1PheOY6vscOQzOLjzQsIP3ydoxAeW250nD5ISPW_Ykptq-Tp35CEIESnM3_eQBT5dQ';
+  var GAS_URL = 'https://script.google.com/macros/s/' + GAS_DEPLOY_ID + '/exec';
+  // 外部瀏覽器專用:瀏覽器同時登入多個 Google 帳號時,GAS 會用 /u/N 去解析網址而開不起來
+  //(畫面是 Google Drive 的「很抱歉,目前無法開啟這個檔案」)。/u/0/ 指定第一個帳號可繞過。
+  var GAS_URL_U0 = 'https://script.google.com/macros/u/0/s/' + GAS_DEPLOY_ID + '/exec';
+  // 重新登入只重試一次的旗標(sessionStorage 可跨越導向 LINE 登入再回來,且關閉分頁即消失)
+  var RETRY_KEY = 'liff_relogin_once';
+
+  // LINE app 的內建瀏覽器沒有登入任何 Google 帳號,不會有多帳號問題,維持原本已驗證可用的網址。
+  // 判斷不出來時(例如 liff.init 失敗)一律回原網址,不拿客戶的主要路徑冒險。
+  function gasEndpoint() {
+    try {
+      return liff.isInClient() ? GAS_URL : GAS_URL_U0;
+    } catch (e) {
+      return GAS_URL;
+    }
+  }
 
   function goToApp(sessionId) {
-    var url = GAS_URL;
+    var url = gasEndpoint();
     // ⚠️ 參數名不能用 sid:sid 是 Google 基礎架構的保留參數,有值時會被攔截回 400。
     if (sessionId) url += '?token=' + encodeURIComponent(sessionId);
     location.replace(url);
   }
 
-  // 登入失敗時:先把原因顯示出來(不再默默掉訪客),讓人能看到問題;5 秒後仍以訪客身分進入,不擋客戶下單。
+  // 登入後要回來的網址必須是乾淨路徑,不能帶 liff.state:從 liff.line.me 進來時網址上會有它,
+  // 若把整條 location.href 當 redirectUri,登入完回到同一個網址,SDK 會再處理一次 liff.state
+  // 又轉一次 → 在登入頁與本頁之間無限來回。
+  function loginRedirectUri() {
+    return location.origin + location.pathname;
+  }
+
+  // idToken 只在「登入當下」簽發、之後不會自動更新,而 liff.isLoggedIn() 只看本機有沒有
+  // access token,不檢查 idToken 的有效期。隔幾小時再進來就會拿到一顆過期的 token,
+  // 後端送去 LINE 的 verify API 必定回 400 → 前端顯示「身分驗證失敗」。
+  // 無痕模式每次都是全新登入,所以永遠看不到這個問題。
+  function idTokenUsable() {
+    try {
+      var d = liff.getDecodedIDToken();
+      return !!(d && d.exp && d.exp * 1000 - Date.now() > 60000); // 剩不到 60 秒也當過期
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // 登入失敗就停在這裡,不放行。系統不提供訪客模式:沒有 LINE 身分就推播不了訂單通知、
+  // 訂單也對不到客戶,寧可擋下來讓人看到原因,也不要收一筆查無來源的訂單。
   function fail(reason) {
     if (settled) return;
     settled = true;
+    document.querySelector('.spinner').style.display = 'none';
+    document.getElementById('msg').textContent = '無法登入';
     var el = document.getElementById('err');
     if (el) {
-      el.textContent = '⚠️ 登入未完成:' + reason + '。5 秒後以訪客身分進入…';
+      el.textContent = '⚠️ 登入未完成:' + reason + '。請按下方按鈕重試,或改由 LINE 官方帳號的選單進入。';
       el.style.display = 'block';
     }
-    document.getElementById('msg').textContent = '登入未完成';
-    setTimeout(function () { goToApp(''); }, 5000);
+    var btn = document.getElementById('retry');
+    if (btn) btn.style.display = 'inline-block';
   }
+
+  // 重試 = 清掉本機殘留的登入狀態後從頭跑一次。連同重登旗標一起清掉,否則只能重試一次。
+  document.getElementById('retry').addEventListener('click', function () {
+    try { sessionStorage.removeItem(RETRY_KEY); } catch (e) {}
+    try { if (liff.isLoggedIn()) liff.logout(); } catch (e) {}
+    location.replace(loginRedirectUri());
+  });
 
   var settled = false;
   setTimeout(function () {
@@ -85,7 +135,7 @@
     if (!liff.isLoggedIn()) {
       // 尚未登入(桌機瀏覽器很常見)→ 導向 LINE 登入。這行會讓瀏覽器跳轉離開本頁,
       // 登入完成後帶著登入狀態回到本頁重跑一次。不要在這裡當成失敗。
-      liff.login({ redirectUri: location.href });
+      liff.login({ redirectUri: loginRedirectUri() });
       return null;
     }
     return liff.getProfile();
@@ -97,6 +147,20 @@
       fail('無法取得使用者資料(profile)');
       return;
     }
+    // 本機留著的 idToken 已過期 → 登出換一顆新的再回來。只重試一次:重登後仍拿不到有效
+    // token 就明確報錯,不要在登入頁與本頁之間無限來回。
+    if (!idTokenUsable()) {
+      if (sessionStorage.getItem(RETRY_KEY)) {
+        fail('idToken 已過期,重新登入後仍無效');
+        return;
+      }
+      sessionStorage.setItem(RETRY_KEY, '1');
+      liff.logout();
+      liff.login({ redirectUri: loginRedirectUri() });
+      return;
+    }
+    sessionStorage.removeItem(RETRY_KEY);
+
     var idToken = liff.getIDToken();
     if (!idToken) {
       fail('無法取得 idToken');
