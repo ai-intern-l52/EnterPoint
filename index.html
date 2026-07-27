@@ -22,7 +22,7 @@
 </head>
 <body>
   <div class="spinner"></div>
-  <div class="msg" id="msg">正在載入產品資料庫...<br>若讀取較慢請耐心等候</div>
+  <div class="msg" id="msg">正在載入訂購系統…</div>
   <!-- 只在登入失敗時才顯示的極簡錯誤列;正常流程完全看不到 -->
   <div id="err" style="display:none; margin-top:16px; max-width:300px; font-size:13px; line-height:1.6;
     color:#B00020; background:#FDECEE; border:1px solid #F5C2C7; border-radius:8px; padding:10px 12px; text-align:center;"></div>
@@ -52,30 +52,43 @@
     location.replace(url);
   }
 
+  // 登入失敗時:先把原因顯示出來(不再默默掉訪客),讓人能看到問題;5 秒後仍以訪客身分進入,不擋客戶下單。
+  function fail(reason) {
+    if (settled) return;
+    settled = true;
+    var el = document.getElementById('err');
+    if (el) {
+      el.textContent = '⚠️ 登入未完成:' + reason + '。5 秒後以訪客身分進入…';
+      el.style.display = 'block';
+    }
+    document.getElementById('msg').textContent = '登入未完成';
+    setTimeout(function () { goToApp(''); }, 5000);
+  }
+
   var settled = false;
   setTimeout(function () {
-    if (!settled) {
-      document.getElementById('msg').textContent = '以訪客模式進入…';
-      goToApp('');
-    }
+    if (!settled) fail('連線逾時(10 秒)');
   }, 10000);
 
   liff.init({ liffId: LIFF_ID }).then(function () {
     if (!liff.isLoggedIn()) {
+      // 尚未登入(桌機瀏覽器很常見)→ 導向 LINE 登入。這行會讓瀏覽器跳轉離開本頁,
+      // 登入完成後帶著登入狀態回到本頁重跑一次。不要在這裡當成失敗。
       liff.login({ redirectUri: location.href });
       return null;
     }
     return liff.getProfile();
   }).then(function (profile) {
+    // 正在導向 LINE 登入(尚未登入)→ 頁面即將跳轉,不可誤判為失敗、也不要提早掉訪客;
+    // 萬一跳轉沒發生,最上面的 10 秒逾時仍會接手。
+    if (!liff.isLoggedIn()) return;
     if (!profile) {
-      settled = true;
-      goToApp('');
+      fail('無法取得使用者資料(profile)');
       return;
     }
     var idToken = liff.getIDToken();
     if (!idToken) {
-      settled = true;
-      goToApp('');
+      fail('無法取得 idToken');
       return;
     }
     // 用 text/plain 避開 CORS 預檢(GAS 無法回應 preflight OPTIONS)。
@@ -92,13 +105,15 @@
       if (!res.ok) throw new Error('HTTP ' + res.status);
       return res.json();
     }).then(function (result) {
-      settled = true;
-      goToApp(result.success && result.sessionId ? result.sessionId : '');
+      if (result.success && result.sessionId) {
+        settled = true;
+        goToApp(result.sessionId);
+      } else {
+        fail('GAS 回應失敗:' + (result.error || '未知'));
+      }
     });
-  }).catch(function () {
-    settled = true;
-    document.getElementById('msg').textContent = '以訪客模式進入…';
-    goToApp('');
+  }).catch(function (err) {
+    fail((err && err.message) || '初始化錯誤');
   });
 </script>
 </body>
