@@ -47,26 +47,15 @@
   // 改在 GitHub Pages(頂層)驗證身份,然後用 POST + session 告訴 GAS。
   // ========================================================================
   var LIFF_ID = '2010821918-1M2BovKM';
-  var GAS_DEPLOY_ID = 'AKfycbyC1PheOY6vscOQzOLjzQsIP3ydoxAeW250nD5ISPW_Ykptq-Tp35CEIESnM3_eQBT5dQ';
-  var GAS_URL = 'https://script.google.com/macros/s/' + GAS_DEPLOY_ID + '/exec';
-  // 外部瀏覽器專用:瀏覽器同時登入多個 Google 帳號時,GAS 會用 /u/N 去解析網址而開不起來
-  //(畫面是 Google Drive 的「很抱歉,目前無法開啟這個檔案」)。/u/0/ 指定第一個帳號可繞過。
-  var GAS_URL_U0 = 'https://script.google.com/macros/u/0/s/' + GAS_DEPLOY_ID + '/exec';
+  // ⚠️ 不要試圖插入 /u/0/ 來處理「瀏覽器同時登入多個 Google 帳號」:
+  // /macros/u/0/s/{id}/exec 與 /u/0/macros/s/{id}/exec 兩種擺法實測都是 404(標題「找不到網頁」)。
+  // 那是 docs.google.com 文件網址的慣例,Apps Script 的部署網址沒有這個形式,只有這一種。
+  var GAS_URL = 'https://script.google.com/macros/s/AKfycbyC1PheOY6vscOQzOLjzQsIP3ydoxAeW250nD5ISPW_Ykptq-Tp35CEIESnM3_eQBT5dQ/exec';
   // 重新登入只重試一次的旗標(sessionStorage 可跨越導向 LINE 登入再回來,且關閉分頁即消失)
   var RETRY_KEY = 'liff_relogin_once';
 
-  // LINE app 的內建瀏覽器沒有登入任何 Google 帳號,不會有多帳號問題,維持原本已驗證可用的網址。
-  // 判斷不出來時(例如 liff.init 失敗)一律回原網址,不拿客戶的主要路徑冒險。
-  function gasEndpoint() {
-    try {
-      return liff.isInClient() ? GAS_URL : GAS_URL_U0;
-    } catch (e) {
-      return GAS_URL;
-    }
-  }
-
   function goToApp(sessionId) {
-    var url = gasEndpoint();
+    var url = GAS_URL;
     // ⚠️ 參數名不能用 sid:sid 是 Google 基礎架構的保留參數,有值時會被攔截回 400。
     if (sessionId) url += '?token=' + encodeURIComponent(sessionId);
     location.replace(url);
