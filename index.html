@@ -83,10 +83,14 @@
   // access token,不檢查 idToken 的有效期。隔幾小時再進來就會拿到一顆過期的 token,
   // 後端送去 LINE 的 verify API 必定回 400 → 前端顯示「身分驗證失敗」。
   // 無痕模式每次都是全新登入,所以永遠看不到這個問題。
-  function idTokenUsable() {
+  // ⚠️ 這只是「省掉一次註定失敗的請求」的最佳化,不是關卡:唯有能明確證明過期才回 true。
+  // 解不出 exp(getDecodedIDToken 回 null 或拋錯)一律回 false 放行,交給後端驗 —— 後端會
+  // 回明確原因,總比在前端把人鎖在門外好。
+  function idTokenExpired() {
     try {
       var d = liff.getDecodedIDToken();
-      return !!(d && d.exp && d.exp * 1000 - Date.now() > 60000); // 剩不到 60 秒也當過期
+      if (!d || !d.exp) return false;
+      return d.exp * 1000 - Date.now() <= 60000; // 剩不到 60 秒也當過期
     } catch (e) {
       return false;
     }
@@ -147,16 +151,13 @@
       fail('無法取得使用者資料(profile)');
       return;
     }
-    // 本機留著的 idToken 已過期 → 登出換一顆新的再回來。只重試一次:重登後仍拿不到有效
-    // token 就明確報錯,不要在登入頁與本頁之間無限來回。
-    if (!idTokenUsable()) {
-      if (sessionStorage.getItem(RETRY_KEY)) {
-        fail('idToken 已過期,重新登入後仍無效');
-        return;
-      }
+    // 本機留著的 idToken 確定已過期 → 登出後重新載入本頁,讓上面 liff.isLoggedIn() 為 false
+    // 的既有分支去走登入(那條路徑已驗證可用),不要在同一個 tick 內 logout 完立刻 login。
+    // 只重試一次,避免在登入頁與本頁之間來回;重試過還是過期就往下走,讓後端給出明確原因。
+    if (idTokenExpired() && !sessionStorage.getItem(RETRY_KEY)) {
       sessionStorage.setItem(RETRY_KEY, '1');
       liff.logout();
-      liff.login({ redirectUri: loginRedirectUri() });
+      location.replace(loginRedirectUri());
       return;
     }
     sessionStorage.removeItem(RETRY_KEY);
