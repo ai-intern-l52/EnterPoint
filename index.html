@@ -40,7 +40,7 @@
 
 <body>
   <img class="loader" src="loading-image-svg.gif" width="1080" height="1080" alt="載入中">
-  <div class="msg" id="msg">正在載入產品庫…<br>若讀取較慢請耐心等候</div>
+  <div class="msg" id="msg">載入中…<br>若讀取較慢請耐心等候</div>
 
   <!-- login error log display -->
   <div id="err"
@@ -54,13 +54,84 @@
     font-family:inherit;">重新登入
   </button>
 
+  <!-- LIFF Line ID Entry -->
   <script>
     var LIFF_ID = '2010821918-1M2BovKM';
-    var GAS_URL = 'https://script.google.com/macros/s/AKfycbyC1PheOY6vscOQzOLjzQsIP3ydoxAeW250nD5ISPW_Ykptq-Tp35CEIESnM3_eQBT5dQ/exec';
     var RETRY_KEY = 'liff_relogin_once';
 
+    // 同一個落地頁、同一個 LIFF app,以 ?to= 分流到不同的 GAS 系統。
+    //   訂購:https://liff.line.me/2010821918-1M2BovKM
+    //   註冊:https://liff.line.me/2010821918-1M2BovKM?to=register
+    // LIFF 會把 LIFF URL 上的 query 原封不動帶到 endpoint,所以不需要第二個 LIFF app。
+    // ⚠️ 只認白名單裡的 key,對不上一律回 order,避免被塞任意網址當跳板。
+    var TARGETS = {
+      order: {
+        url: 'https://script.google.com/macros/s/AKfycbyC1PheOY6vscOQzOLjzQsIP3ydoxAeW250nD5ISPW_Ykptq-Tp35CEIESnM3_eQBT5dQ/exec',
+        msg: '正在載入產品庫…<br>若讀取較慢請耐心等候'
+      },
+      register: {
+        // TODO:部署「用戶註冊」GAS 專案後,把這裡換成它的 /exec 網址
+        url: 'https://script.google.com/macros/s/AKfycbyQr3cPbiIZEJLxAckwkSpyE98PojYjQ9XLpYcrTvOy8rPbbLsjWFZyImPISUppgPzTwQ/exec',
+        msg: '正在確認您的 LINE 帳號…<br>馬上就好'
+      }
+    };
+    var TARGET_KEY = 'liff_target';
+    var TARGET_PENDING_KEY = 'liff_target_pending';
+
+    function ss(action, key, value) {
+      try {
+        if (action === 'get') return sessionStorage.getItem(key) || '';
+        if (action === 'set') sessionStorage.setItem(key, value);
+        if (action === 'del') sessionStorage.removeItem(key);
+      } catch (e) { }
+      return '';
+    }
+
+    // 決定要去哪個系統。優先序:
+    //   1. 網址上的 ?to=
+    //   2. liff.state 裡包起來的 ?to=(從 liff.line.me 進來、SDK 還沒展開之前)
+    //   3. 只有在「剛從 LINE 登入頁轉回來」時,才讀 sessionStorage 記住的值
+    // 第 3 點刻意加上 pending 旗標:登入導回時網址會被清成乾淨路徑,參數會掉,
+    // 但若無條件信任 sessionStorage,同一個分頁稍後再開訂購入口(沒帶 ?to=)
+    // 會被上一次的 register 記憶帶錯地方。旗標只在 liff.login() 前設,用完就清。
+    // ⚠️ 也不能把 to 塞進 loginRedirectUri:登入後要回來的網址必須是乾淨路徑,
+    //    帶參數會與 liff.state 互相打架,造成登入頁與本頁無限來回。
+    function resolveTargetKey() {
+      var search = location.search || '';
+
+      var direct = /[?&]to=([A-Za-z]+)/.exec(search);
+      if (direct) return direct[1];
+
+      var state = /[?&]liff\.state=([^&]*)/.exec(search);
+      if (state) {
+        var decoded = '';
+        try { decoded = decodeURIComponent(state[1]); } catch (e) { decoded = state[1]; }
+        var inner = /(?:[?&]|^)to=([A-Za-z]+)/.exec(decoded);
+        if (inner) return inner[1];
+      }
+
+      if (ss('get', TARGET_PENDING_KEY)) {
+        ss('del', TARGET_PENDING_KEY);
+        return ss('get', TARGET_KEY);
+      }
+      return '';
+    }
+
+    var TARGET_NAME = resolveTargetKey();
+    if (!Object.prototype.hasOwnProperty.call(TARGETS, TARGET_NAME)) TARGET_NAME = 'order';
+    ss('set', TARGET_KEY, TARGET_NAME);
+
+    var TARGET = TARGETS[TARGET_NAME];
+    document.getElementById('msg').innerHTML = TARGET.msg;
+
+    // 轉去 LINE 登入前先立旗標,讓導回來時還認得原本要去哪個系統
+    function loginAndRemember() {
+      ss('set', TARGET_PENDING_KEY, '1');
+      liff.login({ redirectUri: loginRedirectUri() });
+    }
+
     function goToApp(sessionId) {
-      var url = GAS_URL;
+      var url = TARGET.url;
       if (sessionId) url += '?token=' + encodeURIComponent(sessionId);
       location.replace(url);
     }
@@ -95,7 +166,8 @@
 
     // Retry Login Section
     document.getElementById('retry').addEventListener('click', function () {
-      try {sessionStorage.removeItem(RETRY_KEY);} catch (e) { }
+      ss('del', RETRY_KEY);
+      ss('set', TARGET_PENDING_KEY, '1'); // 重整後網址會變乾淨路徑,靠旗標記住原本要去的系統
       try {if (liff.isLoggedIn()) liff.logout();} catch (e) { }
       location.replace(loginRedirectUri());
     });
@@ -119,7 +191,7 @@
 
       if (!liff.isLoggedIn()) {
         // Redirect to Line Official Login Page
-        liff.login({redirectUri: loginRedirectUri()});
+        loginAndRemember();
         return null;
       }
 
@@ -131,14 +203,15 @@
         return;
       }
 
-      if (idTokenExpired() && !sessionStorage.getItem(RETRY_KEY)) {
-        sessionStorage.setItem(RETRY_KEY, '1');
+      if (idTokenExpired() && !ss('get', RETRY_KEY)) {
+        ss('set', RETRY_KEY, '1');
+        ss('set', TARGET_PENDING_KEY, '1'); // 重整後網址會變乾淨路徑,靠旗標記住原本要去的系統
         liff.logout();
         location.replace(loginRedirectUri());
         return;
       }
 
-      sessionStorage.removeItem(RETRY_KEY);
+      ss('del', RETRY_KEY);
 
       var idToken = liff.getIDToken();
       if (!idToken) {
@@ -146,7 +219,7 @@
         return;
       }
 
-      return fetch(GAS_URL, {
+      return fetch(TARGET.url, {
         method: 'POST',
         headers: {'Content-Type': 'text/plain;charset=utf-8'},
         body: JSON.stringify({
